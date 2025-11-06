@@ -5,35 +5,167 @@
   <title>LPH Password Manager</title>
   <link rel="stylesheet" href="styles.css">
   <style>
-    body { font: 13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,system-ui; margin: 0; padding: 12px; min-width: 380px; box-sizing: border-box; }
-    header { display:flex; align-items:center; gap:8px; margin-bottom: 8px; }
-    h1 { font-size: 14px; margin:0; }
-    .row { margin: 8px 0; }
-    .cred { padding:8px; border:1px solid #ddd; border-radius:8px; margin:6px 0; word-break: break-word; overflow-wrap: anywhere; }
-    button { cursor:pointer; }
-    .muted { color:#666; }
-    #site { display:inline-block; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
-    input[type="password"] { min-width: 340px; box-sizing: border-box; }
+    body {
+      font: 13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,system-ui;
+      margin: 0;
+      padding: 12px;
+      min-width: 380px;
+      box-sizing: border-box;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #eee;
+    }
+    h1 {
+      font-size: 14px;
+      margin: 0;
+      flex: 1;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: #666;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ccc;
+    }
+    .status-dot.unlocked {
+      background: #4CAF50;
+    }
+    .status-dot.synced {
+      background: #2196F3;
+    }
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .toolbar button,
+    .toolbar a {
+      padding: 4px 8px;
+      font-size: 11px;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+    .sync-info {
+      background: #f0f8ff;
+      border: 1px solid #cce7ff;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .sync-info.signed-out {
+      background: #fff9e6;
+      border-color: #ffe699;
+    }
+    .sync-info strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+    .sync-info button {
+      margin-top: 8px;
+      font-size: 11px;
+      padding: 4px 12px;
+    }
+    .row {
+      margin: 8px 0;
+    }
+    .cred {
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      margin: 6px 0;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    .cred strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+    .cred-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+    button {
+      cursor: pointer;
+    }
+    .muted {
+      color: #666;
+    }
+    #site {
+      display: inline-block;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-weight: 500;
+    }
+    input[type="password"] {
+      min-width: 340px;
+      box-sizing: border-box;
+    }
+    .btn-primary {
+      background: #007AFF;
+      color: white;
+      border: none;
+    }
+    .btn-primary:hover {
+      background: #0051D5;
+    }
+    .btn-danger {
+      color: #b00;
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>LPH Password Manager</h1>
-    <span class="muted" id="status"></span>
-    <div style="margin-left:auto; display:flex; gap:6px;">
-      <button id="lockBtn">Lock</button>
+    <h1>🔐 LPH</h1>
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Locked</span>
+    </div>
+    <div class="toolbar">
+      <button id="syncBtn" style="display:none;" title="Sync now">↻</button>
+      <button id="lockBtn" style="display:none;">Lock</button>
+      <a href="#" id="accountLink" style="display:none;">Account</a>
       <a href="#" id="optionsLink">Options</a>
     </div>
   </header>
+  
+  <!-- Sync Status Info -->
+  <div id="syncInfo" style="display:none;"></div>
+  
+  <!-- Locked View -->
   <div id="lockedView" style="display:none;">
     <div class="row">Enter master password to unlock:</div>
-    <div class="row"><input type="password" id="unlockPwd" placeholder="Master password" style="width:100%;"></div>
-    <div class="row"><button id="unlockBtn" style="width:100%;">Unlock</button></div>
+    <div class="row">
+      <input type="password" id="unlockPwd" placeholder="Master password" style="width:100%;">
+    </div>
+    <div class="row">
+      <button id="unlockBtn" class="btn-primary" style="width:100%;">Unlock</button>
+    </div>
   </div>
+  
+  <!-- Unlocked View -->
   <div id="unlockedView" style="display:none;">
-    <div class="row">Current site: <span id="site"></span></div>
+    <div class="row">
+      Current site: <span id="site"></span>
+    </div>
     <div id="creds"></div>
-    <div class="row muted" id="noCreds" style="display:none;">No saved credentials for this site.</div>
+    <div class="row muted" id="noCreds" style="display:none;">
+      No saved credentials for this site.
+    </div>
   </div>
 
   <script type="module" src="popup.js"></script>

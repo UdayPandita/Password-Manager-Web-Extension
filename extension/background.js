@@ -1,11 +1,5 @@
-// LPH Password Manager - Background Service Worker with Supabase Sync
-// CSP-compliant version - no eval()
-
-// Import config directly (works because it's a module)
-import { SUPABASE_CONFIG } from './config.js';
-
-// Supabase client will be loaded dynamically
-let supabaseClient = null;
+// LPH Password Manager - Background Service Worker
+// Local-only authentication with master password encryption
 
 // Session state
 let session = {
@@ -13,44 +7,15 @@ let session = {
   salt: null,
   unlocked: false,
   user: null,
-  syncEnabled: false,
 };
 
+// Storage keys
 const STORAGE_KEYS = {
   SALT: 'pm_salt',
   VERIFIER: 'pm_verifier',
   DATA: 'pm_data',
-  SUPABASE_SESSION: 'pm_supabase_session',
-  SYNC_ENABLED: 'pm_sync_enabled',
-  LAST_SYNC: 'pm_last_sync',
+  LOCAL_USER: 'pm_local_user',
 };
-
-// ----- Supabase initialization -----
-async function initSupabase() {
-  if (supabaseClient) return supabaseClient;
-  
-  try {
-    // Import Supabase from CDN
-    const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-    
-    supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
-    
-    // Restore session if exists
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.SUPABASE_SESSION);
-    if (stored[STORAGE_KEYS.SUPABASE_SESSION]) {
-      const { data } = await supabaseClient.auth.setSession(stored[STORAGE_KEYS.SUPABASE_SESSION]);
-      if (data.session) {
-        session.user = data.session.user;
-        session.syncEnabled = true;
-      }
-    }
-    
-    return supabaseClient;
-  } catch (error) {
-    console.error('Failed to initialize Supabase:', error);
-    throw error;
-  }
-}
 
 // ----- Crypto helpers -----
 async function getSalt() {
@@ -115,94 +80,96 @@ function base64ToBytes(b64) {
   return out;
 }
 
-// ----- Supabase Auth -----
+// ----- Authentication (local only) -----
+// Use PBKDF2 for password hashing with per-user salt
+async function derivePbkdf2(password, saltBytes, iterations = 200000, lengthBytes = 32) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    lengthBytes * 8
+  );
+
+  return new Uint8Array(bits);
+}
+
 async function signUp(email, password) {
-  const sb = await initSupabase();
-  const { data, error } = await sb.auth.signUp({ email, password });
-  if (error) throw new Error(error.message);
-  
-  if (data.session) {
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.SUPABASE_SESSION]: data.session,
-    });
-    session.user = data.user;
-    session.syncEnabled = true;
+  // Check if user already exists
+  const existing = await chrome.storage.local.get(STORAGE_KEYS.LOCAL_USER);
+  if (existing && existing[STORAGE_KEYS.LOCAL_USER]) {
+    return { ok: false, error: 'User already exists' };
   }
+
+  // Create a single salt for both authentication and vault encryption
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const saltB64 = bytesToBase64(salt);
   
-  return { ok: true, user: data.user };
+  // Store salt for both purposes
+  await chrome.storage.local.set({ [STORAGE_KEYS.SALT]: saltB64 });
+  
+  // Create encryption key (CryptoKey for AES-GCM)
+  session.salt = salt;
+  session.key = await deriveKeyFromPassword(password, salt);
+  
+  // Create verifier for unlock validation
+  const verifierBlob = await encryptJson({ v: 'ok' }, session.key);
+  await chrome.storage.local.set({ [STORAGE_KEYS.VERIFIER]: verifierBlob });
+  
+  // Store user account (email only, password verified via verifier)
+  const userObj = { email, salt: saltB64 };
+  await chrome.storage.local.set({ [STORAGE_KEYS.LOCAL_USER]: userObj });
+  
+  // Set user in session
+  session.user = { email };
+  session.unlocked = true;
+  
+  return { ok: true, user: session.user };
 }
 
 async function signIn(email, password) {
-  const sb = await initSupabase();
-  const { data, error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) throw new Error(error.message);
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.LOCAL_USER);
+  const obj = stored[STORAGE_KEYS.LOCAL_USER];
   
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.SUPABASE_SESSION]: data.session,
-  });
-  session.user = data.user;
-  session.syncEnabled = true;
+  if (!obj) {
+    return { ok: false, error: 'No account found' };
+  }
   
-  return { ok: true, user: data.user };
+  if (obj.email !== email) {
+    return { ok: false, error: 'Invalid email or password' };
+  }
+  
+  // Set user in session first
+  session.user = { email };
+  
+  // Try to unlock vault with password
+  const unlockResult = await unlock(password);
+  if (!unlockResult.ok) {
+    session.user = null; // Clear user if unlock fails
+    return { ok: false, error: 'Invalid email or password' };
+  }
+  
+  return { ok: true, user: session.user };
 }
 
 async function signOut() {
-  const sb = await initSupabase();
-  await sb.auth.signOut();
-  await chrome.storage.local.remove(STORAGE_KEYS.SUPABASE_SESSION);
+  // Clear session but keep user account data so they can sign in again
   session.user = null;
-  session.syncEnabled = false;
+  session.key = null;
+  session.unlocked = false;
   return { ok: true };
-}
-
-// ----- Sync with Supabase -----
-async function pushVaultToCloud() {
-  if (!session.syncEnabled || !session.user) return;
-  
-  const sb = await initSupabase();
-  const saltB64 = bytesToBase64(session.salt);
-  const { [STORAGE_KEYS.VERIFIER]: verifier, [STORAGE_KEYS.DATA]: encryptedData } = 
-    await chrome.storage.local.get([STORAGE_KEYS.VERIFIER, STORAGE_KEYS.DATA]);
-  
-  const { error } = await sb
-    .from('vaults')
-    .upsert({
-      user_id: session.user.id,
-      salt: saltB64,
-      verifier: verifier || '',
-      encrypted_data: encryptedData || '',
-      updated_at: new Date().toISOString(),
-    });
-  
-  if (error) throw new Error(`Sync failed: ${error.message}`);
-  
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.LAST_SYNC]: new Date().toISOString(),
-  });
-}
-
-async function pullVaultFromCloud() {
-  if (!session.syncEnabled || !session.user) return null;
-  
-  const sb = await initSupabase();
-  const { data, error } = await sb
-    .from('vaults')
-    .select('*')
-    .eq('user_id', session.user.id)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    throw new Error(`Pull failed: ${error.message}`);
-  }
-  
-  if (!data) return null;
-  
-  return {
-    salt: data.salt,
-    verifier: data.verifier,
-    encryptedData: data.encrypted_data,
-    updatedAt: data.updated_at,
-  };
 }
 
 // ----- Master password management -----
@@ -215,41 +182,13 @@ async function setMasterPassword(password) {
   
   session.unlocked = true;
   
-  if (session.syncEnabled) {
-    try {
-      await pushVaultToCloud();
-    } catch (e) {
-      console.error('Push failed:', e);
-    }
-  }
-  
   return { ok: true };
 }
 
 async function unlock(password) {
-  let cloudVault = null;
-  if (session.syncEnabled) {
-    try {
-      cloudVault = await pullVaultFromCloud();
-    } catch (e) {
-      console.error('Pull failed:', e);
-    }
-  }
-  
-  let salt, verifier;
-  if (cloudVault) {
-    salt = base64ToBytes(cloudVault.salt);
-    verifier = cloudVault.verifier;
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.SALT]: cloudVault.salt,
-      [STORAGE_KEYS.VERIFIER]: cloudVault.verifier,
-      [STORAGE_KEYS.DATA]: cloudVault.encryptedData,
-    });
-  } else {
-    salt = await getSalt();
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.VERIFIER);
-    verifier = stored[STORAGE_KEYS.VERIFIER];
-  }
+  const salt = await getSalt();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.VERIFIER);
+  const verifier = stored[STORAGE_KEYS.VERIFIER];
   
   const key = await deriveKeyFromPassword(password, salt);
   
@@ -298,14 +237,6 @@ async function saveAllData(obj) {
   if (!session.unlocked || !session.key) throw new Error('Locked');
   const blob = await encryptJson(obj, session.key);
   await chrome.storage.local.set({ [STORAGE_KEYS.DATA]: blob });
-  
-  if (session.syncEnabled) {
-    try {
-      await pushVaultToCloud();
-    } catch (e) {
-      console.error('Auto-sync failed:', e);
-    }
-  }
 }
 
 function domainFromUrl(url) {
@@ -377,13 +308,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'PM_LOCK':
           sendResponse(lock());
           break;
-        case 'PM_STATUS':
+        case 'PM_STATUS': {
+          const stored = await chrome.storage.local.get(STORAGE_KEYS.LOCAL_USER);
+          const localUserExists = !!(stored && stored[STORAGE_KEYS.LOCAL_USER]);
           sendResponse({ 
             unlocked: session.unlocked,
-            syncEnabled: session.syncEnabled,
             user: session.user ? { email: session.user.email } : null,
+            localUserExists,
           });
           break;
+        }
         case 'PM_SAVE_CREDENTIALS': {
           if (!session.unlocked) throw new Error('Locked');
           const { url, username, password } = msg;
@@ -403,7 +337,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const { url } = msg;
           const domain = domainFromUrl(url);
           const all = await loadAllData();
-          sendResponse({ ok: true, credentials: all[domain] || [] });
+          const credentials = all[domain] || [];
+          sendResponse({ ok: true, credentials });
+          break;
+        }
+        case 'PM_GET_ALL': {
+          if (!session.unlocked) throw new Error('Locked');
+          const all = await loadAllData();
+          sendResponse({ ok: true, data: all });
           break;
         }
         case 'PM_DELETE_CREDENTIAL': {
@@ -419,14 +360,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         }
-        case 'PM_SYNC_NOW':
-          if (session.syncEnabled) {
-            await pushVaultToCloud();
-            sendResponse({ ok: true, synced: new Date().toISOString() });
-          } else {
-            sendResponse({ ok: false, error: 'Sync not enabled' });
-          }
-          break;
         case 'PM_WIPE_ALL':
           await chrome.storage.local.clear();
           lock();

@@ -121,7 +121,7 @@
         <input type="email" id="signin-email" required autocomplete="email">
       </div>
       <div class="form-group">
-        <label for="signin-password">Password</label>
+        <label for="signin-password">Master Password</label>
         <input type="password" id="signin-password" required autocomplete="current-password">
       </div>
       <button type="submit">Sign In</button>
@@ -135,30 +135,27 @@
         <input type="email" id="signup-email" required autocomplete="email">
       </div>
       <div class="form-group">
-        <label for="signup-password">Password (min 6 characters)</label>
-        <input type="password" id="signup-password" required minlength="6" autocomplete="new-password">
+        <label for="signup-password">Master Password (min 8 characters)</label>
+        <input type="password" id="signup-password" required minlength="8" autocomplete="new-password">
       </div>
       <div class="form-group">
-        <label for="signup-confirm">Confirm Password</label>
-        <input type="password" id="signup-confirm" required minlength="6" autocomplete="new-password">
+        <label for="signup-confirm">Confirm Master Password</label>
+        <input type="password" id="signup-confirm" required minlength="8" autocomplete="new-password">
       </div>
       <button type="submit">Create Account</button>
       <div class="message" id="signup-message"></div>
       
       <div class="info">
-        <strong>Note:</strong> You'll receive a confirmation email. Click the link to verify your account before signing in.
+        <strong>Important:</strong><br>
+        Your master password is used for both signing in and encrypting your vault. Keep it safe - it cannot be recovered if lost.
       </div>
     </form>
     
     <a href="#" class="back-link" id="backLink">← Back to Extension</a>
     
     <div class="info" style="margin-top: 24px;">
-      <strong>Why sign up?</strong><br>
-      • Sync passwords across devices<br>
-      • Encrypted cloud backup<br>
-      • Access from multiple browsers<br>
-      <br>
-      <strong>Security:</strong> Your master password and decrypted data never leave your device. Only encrypted blobs are stored in the cloud.
+      <strong>Local-Only Storage:</strong><br>
+      All your passwords are encrypted and stored locally on your device. Your master password never leaves your device and cannot be recovered if lost.
     </div>
   </div>
   

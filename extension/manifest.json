@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LPH Password Manager",
   "version": "0.2.0",
-  "description": "LPH Password Manager: a minimal, cloud-synced password manager for Chromium browsers. Detects login forms, saves encrypted credentials, and autofills them across devices.",
+  "description": "LPH Password Manager: a minimal, local password manager for Chromium browsers. Detects login forms, saves encrypted credentials locally.",
   "permissions": [
     "storage",
     "activeTab",
@@ -45,8 +45,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "styles.css",
-        "config.js"
+        "styles.css"
       ],
       "matches": ["<all_urls>"]
     }

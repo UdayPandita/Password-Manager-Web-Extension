@@ -77,14 +77,14 @@ document.getElementById('signupForm').addEventListener('submit', async (e) => {
   const confirm = document.getElementById('signup-confirm').value;
   const btn = e.target.querySelector('button[type="submit"]');
   
-  // Validate
+  // Validate master password
   if (password !== confirm) {
     showMessage('signup', 'Passwords do not match');
     return;
   }
   
-  if (password.length < 6) {
-    showMessage('signup', 'Password must be at least 6 characters');
+  if (password.length < 8) {
+    showMessage('signup', 'Master password must be at least 8 characters');
     return;
   }
   
@@ -100,17 +100,14 @@ document.getElementById('signupForm').addEventListener('submit', async (e) => {
     
     if (response.ok) {
       showMessage('signup', 
-        '✓ Account created! Check your email to verify your account before signing in.',
+        '✓ Account created successfully! Redirecting to extension...',
         'success'
       );
       
-      // Clear form
-      e.target.reset();
-      
-      // Switch to sign in tab after 3 seconds
+      // Close window after success
       setTimeout(() => {
-        document.querySelector('.tab[data-tab="signin"]').click();
-      }, 3000);
+        window.close();
+      }, 1500);
     } else {
       throw new Error(response.error || 'Sign up failed');
     }

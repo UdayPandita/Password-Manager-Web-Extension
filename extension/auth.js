@@ -92,22 +92,12 @@ document.getElementById('signupForm').addEventListener('submit', async (e) => {
   btn.textContent = 'Creating account...';
   
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'PM_SIGNUP',
-      email,
-      password,
-    });
-    
-    if (response.ok) {
-      showMessage('signup', 
-        '✓ Account created successfully! Redirecting to extension...',
-        'success'
-      );
-      
-      // Close window after success
-      setTimeout(() => {
-        window.close();
-      }, 1500);
+    // Start signup flow that generates a mnemonic which the user must save/verify
+    const response = await chrome.runtime.sendMessage({ type: 'PM_GENERATE_MNEMONIC', email, password });
+    if (response.ok && response.mnemonic) {
+      // Redirect to mnemonic display/verification page so user can save the phrase
+      window.location.href = 'mnemonic-display.html';
+      return;
     } else {
       throw new Error(response.error || 'Sign up failed');
     }

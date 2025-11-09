@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Save your recovery phrase</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { font: 14px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,system-ui; margin: 0; padding: 24px; min-width: 380px; }
+    .container { max-width: 620px; margin: 0 auto; }
+    .phrase { background: #fffbe6; padding: 16px; border-radius: 8px; font-size: 16px; word-break:break-word; }
+    .note { margin-top: 12px; color:#666; }
+    button { margin-top: 16px; padding: 10px 14px; background:#007AFF; color:white; border:none; border-radius:8px; cursor:pointer; }
+    .small { font-size:13px; color:#666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Write down your recovery phrase</h1>
+    <p class="small">This 12-word phrase lets you recover your vault if you forget your master password. Store it offline and private.</p>
+    <div id="phrase" class="phrase">Generating...</div>
+    <div class="note">Do not store this phrase in plaintext online. If you lose it, you can still recover the account only if you have this phrase.</div>
+    <button id="savedBtn">I have saved it securely</button>
+    <div style="margin-top:12px;color:#666;font-size:13px;">After saving, you'll be asked to re-enter the phrase to confirm.</div>
+  </div>
+  <script type="module" src="mnemonic-display.js"></script>
+</body>
+</html>

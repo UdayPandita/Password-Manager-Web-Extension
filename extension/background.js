@@ -5,6 +5,7 @@
 let session = {
   key: null,
   salt: null,
+  vaultKey: null,
   unlocked: false,
   user: null,
 };
@@ -15,6 +16,7 @@ const STORAGE_KEYS = {
   VERIFIER: 'pm_verifier',
   DATA: 'pm_data',
   LOCAL_USER: 'pm_local_user',
+  ENCRYPTED_VAULT_KEY: 'pm_encrypted_vault_key',
 };
 
 // ----- Crypto helpers -----
@@ -67,6 +69,24 @@ async function decryptJson(b64, key) {
   return JSON.parse(new TextDecoder().decode(pt));
 }
 
+// Encrypt/Decrypt raw bytes (Uint8Array) with AES-GCM
+async function encryptBytes(bytes, key) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes);
+  const out = new Uint8Array(iv.byteLength + ct.byteLength);
+  out.set(iv, 0);
+  out.set(new Uint8Array(ct), iv.byteLength);
+  return bytesToBase64(out);
+}
+
+async function decryptBytes(b64, key) {
+  const all = base64ToBytes(b64);
+  const iv = all.slice(0, 12);
+  const ct = all.slice(12);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return new Uint8Array(pt);
+}
+
 function bytesToBase64(bytes) {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -106,6 +126,102 @@ async function derivePbkdf2(password, saltBytes, iterations = 200000, lengthByte
   return new Uint8Array(bits);
 }
 
+// Derive a vault key (AES-GCM 256) from a mnemonic phrase using PBKDF2 (BIP-39 style)
+async function deriveVaultKeyFromMnemonic(mnemonic, passphrase = '') {
+  const enc = new TextEncoder();
+  const password = enc.encode(mnemonic.normalize('NFKD'));
+  const saltStr = 'mnemonic' + (passphrase || '');
+  const salt = enc.encode(saltStr.normalize('NFKD'));
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    password,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 2048, hash: 'SHA-512' },
+    keyMaterial,
+    512
+  );
+
+  const bytes = new Uint8Array(bits);
+  // Use first 32 bytes (256 bits) as AES key
+  const keyBytes = bytes.slice(0, 32);
+  return await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+// Return raw key bytes (32 bytes) derived from mnemonic (useful for storing encrypted key)
+async function deriveVaultKeyRaw(mnemonic, passphrase = '') {
+  const enc = new TextEncoder();
+  const password = enc.encode(mnemonic.normalize('NFKD'));
+  const saltStr = 'mnemonic' + (passphrase || '');
+  const salt = enc.encode(saltStr.normalize('NFKD'));
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    password,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 2048, hash: 'SHA-512' },
+    keyMaterial,
+    512
+  );
+
+  const bytes = new Uint8Array(bits);
+  return bytes.slice(0, 32);
+}
+
+// A small 256-word list used for generating a human-friendly mnemonic.
+// Note: This is a compact list (256 words). For production/BIP-39 compatibility
+// consider replacing with a full BIP-39 wordlist or library.
+const WORDLIST = [
+  'apple','arm','able','angle','ant','arch','army','aunt','away','baby','back','bake','ball','band','bank','bar',
+  'base','bath','beach','bear','beat','bed','bee','bell','belt','bench','bend','best','bird','birth','bit','bite',
+  'black','blade','blame','blend','bless','blind','block','blood','blow','blue','board','boat','body','bolt','bone','book',
+  'boom','boot','border','bottle','box','boy','brain','branch','brave','bread','break','brick','bridge','bright','bring','broad',
+  'broom','brown','brush','bubble','bucket','build','bulb','bulk','bull','burn','burst','bus','bush','busy','butter','button',
+  'cable','cage','cake','call','calm','camera','camp','canal','candle','candy','canvas','cap','car','card','care','carry',
+  'cart','case','cash','cast','catch','cause','cave','ceiling','cell','cent','chain','chair','chalk','chance','change','chart',
+  'check','cheese','chef','chest','chicken','child','chip','choice','choose','chore','circle','city','claim','class','clean','clear',
+  'climb','clock','close','cloth','cloud','club','coach','coal','coast','coat','code','coffee','coil','coin','cold','collect',
+  'color','combine','come','comfort','comic','command','common','company','compare','compass','complete','computer','concert','condition','connect','consider',
+  'contact','contain','content','contest','context','control','cook','cool','copy','corner','correct','cost','cotton','couch','could','count',
+  'country','course','court','cover','cow','crack','craft','crane','crash','crawl','create','credit','crew','cricket','crime','crisp',
+  'cross','crowd','crown','cruise','crush','cry','culture','cup','curious','current','curve','custom','cute','cycle','daily','damage',
+  'dance','danger','dark','data','date','daughter','dawn','day','deal','debate','decide','decline','deer','define','degree','delay',
+  'deliver','demand','deny','depend','depth','describe','desert','design','desk','detail','detect','develop','device','devote','dialog','diamond',
+  'diary','dictate','die','diet','difference','different','difficult','dig','digital','dinner','direct','dirt','dirty','discuss','disease','dish',
+  'disk','display','distance','divide','doctor','document','dog','doll','domain','door','double','doubt','down','draft','dragon','drama',
+  'draw','dream','dress','drift','drink','drive','drop','drug','drum','dry','duck','dumb','dust','duty','dynamic','eagle',
+  'ear','early','earn','earth','ease','east','easy','echo','edge','edit','educate','effect','effort','egg','eight','either',
+  'elbow','elder','electric','elegant','element','elephant','elevator','elite','else','empty','enable','end','enemy','energy','engine','enjoy',
+  'enough','enter','entry','envelope','equal','equipment','error','escape','especially','estate','estimate','even','evening','event','ever','every',
+  'exact','exam','example','excite','exit','expand','expect','expense','experience','expert','explain','express','extend','extra','eye','face'
+];
+
+// Generate a 12-word mnemonic from the WORDLIST
+function generateMnemonic() {
+  const indices = new Uint8Array(12);
+  crypto.getRandomValues(indices);
+  const words = [];
+  for (let i = 0; i < 12; i++) {
+    // Map byte (0-255) to wordlist index
+    words.push(WORDLIST[indices[i] % WORDLIST.length]);
+  }
+  return words.join(' ');
+}
+
+// Temporary session storage for signup flow
+// session.tempSignup = { email, password }
+// session.mnemonic = '...'
+
 async function signUp(email, password) {
   // Check if user already exists
   const existing = await chrome.storage.local.get(STORAGE_KEYS.LOCAL_USER);
@@ -128,6 +244,17 @@ async function signUp(email, password) {
   const verifierBlob = await encryptJson({ v: 'ok' }, session.key);
   await chrome.storage.local.set({ [STORAGE_KEYS.VERIFIER]: verifierBlob });
   
+  // Create a random vault key (K_vault) and store it encrypted by the master key
+  try {
+    const vaultRaw = crypto.getRandomValues(new Uint8Array(32));
+    const encVault = await encryptBytes(vaultRaw, session.key);
+    await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_VAULT_KEY]: encVault });
+    session.vaultKey = await crypto.subtle.importKey('raw', vaultRaw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  } catch (e) {
+    console.warn('Failed to create vault key during signup', e);
+    session.vaultKey = null;
+  }
+
   // Store user account (email only, password verified via verifier)
   const userObj = { email, salt: saltB64 };
   await chrome.storage.local.set({ [STORAGE_KEYS.LOCAL_USER]: userObj });
@@ -180,6 +307,28 @@ async function setMasterPassword(password) {
   const verifierBlob = await encryptJson({ v: 'ok' }, session.key);
   await chrome.storage.local.set({ [STORAGE_KEYS.VERIFIER]: verifierBlob });
   
+  // If there is no encrypted vault key yet (first time), create one and store it encrypted by master key
+  const encStored = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_VAULT_KEY);
+  if (!encStored[STORAGE_KEYS.ENCRYPTED_VAULT_KEY]) {
+    try {
+      const vaultRaw = crypto.getRandomValues(new Uint8Array(32));
+      const encVault = await encryptBytes(vaultRaw, session.key);
+      await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_VAULT_KEY]: encVault });
+      session.vaultKey = await crypto.subtle.importKey('raw', vaultRaw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    } catch (e) {
+      console.warn('Failed to create vault key in setMasterPassword', e);
+      session.vaultKey = null;
+    }
+  } else {
+    // Try to decrypt existing vault key into session
+    try {
+      const vaultBytes = await decryptBytes(encStored[STORAGE_KEYS.ENCRYPTED_VAULT_KEY], session.key);
+      session.vaultKey = await crypto.subtle.importKey('raw', vaultBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    } catch (e) {
+      session.vaultKey = null;
+    }
+  }
+
   session.unlocked = true;
   
   return { ok: true };
@@ -205,6 +354,24 @@ async function unlock(password) {
       session.key = key;
       session.salt = salt;
       session.unlocked = true;
+
+      // Attempt to load encrypted vault key (K_vault) and decrypt it with master key
+      const encStored = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_VAULT_KEY);
+      const encVault = encStored[STORAGE_KEYS.ENCRYPTED_VAULT_KEY];
+      if (encVault) {
+        try {
+          const vaultBytes = await decryptBytes(encVault, session.key);
+          // Import as AES-GCM key
+          session.vaultKey = await crypto.subtle.importKey('raw', vaultBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+        } catch (e) {
+          // Couldn't decrypt vault key - leave vaultKey null and fallback to session.key later
+          console.warn('Failed to decrypt vault key:', e);
+          session.vaultKey = null;
+        }
+      } else {
+        session.vaultKey = null;
+      }
+
       return { ok: true };
     }
   } catch (e) {
@@ -226,7 +393,9 @@ async function loadAllData() {
   if (!blob) return {};
   if (!session.unlocked || !session.key) throw new Error('Locked');
   try {
-    return await decryptJson(blob, session.key);
+    // Use vaultKey (derived from mnemonic) if available, otherwise fall back to master key
+    const keyToUse = session.vaultKey || session.key;
+    return await decryptJson(blob, keyToUse);
   } catch (e) {
     console.error('Decrypt failed', e);
     throw new Error('Decrypt failed');
@@ -235,7 +404,9 @@ async function loadAllData() {
 
 async function saveAllData(obj) {
   if (!session.unlocked || !session.key) throw new Error('Locked');
-  const blob = await encryptJson(obj, session.key);
+  // Use vaultKey (derived from mnemonic) if available, otherwise fall back to master key
+  const keyToUse = session.vaultKey || session.key;
+  const blob = await encryptJson(obj, keyToUse);
   await chrome.storage.local.set({ [STORAGE_KEYS.DATA]: blob });
 }
 
@@ -290,6 +461,109 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'PM_SIGNUP':
           sendResponse(await signUp(msg.email, msg.password));
           break;
+        case 'PM_GENERATE_MNEMONIC': {
+          // Begin a signup flow that requires mnemonic confirmation.
+          const { email, password } = msg;
+          // Temporarily store signup data in session until verification
+          session.tempSignup = { email, password };
+          const mnemonic = generateMnemonic();
+          session.mnemonic = mnemonic;
+          sendResponse({ ok: true, mnemonic });
+          break;
+        }
+        case 'PM_GET_MNEMONIC': {
+          sendResponse({ ok: true, mnemonic: session.mnemonic || null });
+          break;
+        }
+        case 'PM_VERIFY_MNEMONIC': {
+          const { mnemonic } = msg;
+          if (!session.tempSignup || !session.mnemonic) {
+            sendResponse({ ok: false, error: 'No signup in progress' });
+            break;
+          }
+          if ((mnemonic || '').trim() !== session.mnemonic) {
+            sendResponse({ ok: false, error: 'Mnemonic does not match' });
+            break;
+          }
+
+          // Complete account creation using stored tempSignup
+          const { email, password } = session.tempSignup;
+
+          // Create salt and master key
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const saltB64 = bytesToBase64(salt);
+          await chrome.storage.local.set({ [STORAGE_KEYS.SALT]: saltB64 });
+          session.salt = salt;
+          session.key = await deriveKeyFromPassword(password, salt);
+
+          // Create verifier and store
+          const verifierBlob = await encryptJson({ v: 'ok' }, session.key);
+          await chrome.storage.local.set({ [STORAGE_KEYS.VERIFIER]: verifierBlob });
+
+          // Derive vault key raw bytes and encrypt them with master key for storage
+          const vaultRaw = await deriveVaultKeyRaw(session.mnemonic);
+          const encVault = await encryptBytes(vaultRaw, session.key);
+          await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_VAULT_KEY]: encVault });
+
+          // Import vaultKey into session
+          session.vaultKey = await crypto.subtle.importKey('raw', vaultRaw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+
+          // Store user record
+          const userObj = { email, salt: saltB64 };
+          await chrome.storage.local.set({ [STORAGE_KEYS.LOCAL_USER]: userObj });
+
+          // Mark session as signed in/unlocked and clear temp
+          session.user = { email };
+          session.unlocked = true;
+          delete session.tempSignup;
+          delete session.mnemonic;
+
+          sendResponse({ ok: true, user: session.user });
+          break;
+        }
+        case 'PM_RECOVER_ACCOUNT': {
+          // Recover account given mnemonic and new master password
+          const { mnemonic, newPassword } = msg;
+          if (!mnemonic || !newPassword) {
+            sendResponse({ ok: false, error: 'Missing fields' });
+            break;
+          }
+
+          // Derive vault raw key from mnemonic
+          const vaultRaw = await deriveVaultKeyRaw(mnemonic);
+
+          // Use existing salt if available, otherwise create
+          let saltObj = await chrome.storage.local.get(STORAGE_KEYS.SALT);
+          let saltB64 = saltObj[STORAGE_KEYS.SALT];
+          let salt;
+          if (!saltB64) {
+            salt = crypto.getRandomValues(new Uint8Array(16));
+            saltB64 = bytesToBase64(salt);
+            await chrome.storage.local.set({ [STORAGE_KEYS.SALT]: saltB64 });
+          } else {
+            salt = base64ToBytes(saltB64);
+          }
+
+          // Derive new master key from newPassword
+          const newMasterKey = await deriveKeyFromPassword(newPassword, salt);
+
+          // Store new verifier
+          const verifierBlob = await encryptJson({ v: 'ok' }, newMasterKey);
+          await chrome.storage.local.set({ [STORAGE_KEYS.VERIFIER]: verifierBlob });
+
+          // Encrypt vault raw with new master key and store
+          const encVault = await encryptBytes(vaultRaw, newMasterKey);
+          await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_VAULT_KEY]: encVault });
+
+          // Keep session cleared - user must sign in with new password
+          session.user = null;
+          session.key = null;
+          session.vaultKey = null;
+          session.unlocked = false;
+
+          sendResponse({ ok: true });
+          break;
+        }
         case 'PM_SIGNIN':
           sendResponse(await signIn(msg.email, msg.password));
           break;
